@@ -8,6 +8,7 @@ Parameters:
   ApiStage:
     Description: The name of the stage for the API (e.g. Dev/Prod/Test)
     Default: Prod
+    Type: String
 
 # More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
 Globals:
@@ -15,26 +16,43 @@ Globals:
     Timeout: 5
 
 Resources:
+  ApiGatewayRestApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: entity-extractor-app-api
+      StageName: !Ref ApiStage
+
+  SpacyModelLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: entity-extractor-app-spacy-model-layer
+      Description: spaCy and the model to be used by Lambda functions
+      ContentUri: spacy_model_layer/
+      CompatibleRuntimes:
+        - python3.8
+    Metadata:
+      BuildMethod: makefile
+
   EntityExtractorFunction:
     Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
     Properties:
       CodeUri: entity_extractor/
       Handler: app.lambda_handler
       Runtime: python3.8
+      Layers:
+        - !Ref SpacyModelLayer
       Events:
         EntityExtractor:
           Type: Api # More info about API Event Source: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#api
           Properties:
             Path: /extract-entities
-            Method: post
+            Method: POST
+            RestApiId: !Ref ApiGatewayRestApi
 
 Outputs:
-  # ServerlessRestApi is an implicit API created out of Events key under Serverless::Function
-  # Find out more about other implicit resources you can reference within SAM
-  # https://github.com/awslabs/serverless-application-model/blob/master/docs/internals/generated_resources.rst#api
   EntityExtractorApi:
     Description: "API Gateway endpoint URL for Prod stage for ExtractEntities function"
-    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/${ApiStage}/extract-entities"
+    Value: !Sub "https://${ApiGatewayRestApi}.execute-api.${AWS::Region}.amazonaws.com/${ApiStage}/extract-entities"
   EntityExtractorFunction:
     Description: "ExtractEntities Lambda Function ARN"
     Value: !GetAtt EntityExtractorFunction.Arn
