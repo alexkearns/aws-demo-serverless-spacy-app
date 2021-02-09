@@ -22,25 +22,11 @@ Resources:
       Name: entity-extractor-app-api
       StageName: !Ref ApiStage
 
-  SpacyModelLayer:
-    Type: AWS::Serverless::LayerVersion
-    Properties:
-      LayerName: entity-extractor-app-spacy-model-layer
-      Description: spaCy and the model to be used by Lambda functions
-      ContentUri: spacy_model_layer/
-      CompatibleRuntimes:
-        - python3.8
-    Metadata:
-      BuildMethod: makefile
-
   EntityExtractorFunction:
     Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
     Properties:
-      CodeUri: entity_extractor/
+      PackageType: Image
       Handler: app.lambda_handler
-      Runtime: python3.8
-      Layers:
-        - !Ref SpacyModelLayer
       Events:
         EntityExtractor:
           Type: Api # More info about API Event Source: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#api
@@ -48,6 +34,9 @@ Resources:
             Path: /extract-entities
             Method: POST
             RestApiId: !Ref ApiGatewayRestApi
+    Metadata:
+      DockerContext: ./entity_extractor
+      Dockerfile: Dockerfile
 
 Outputs:
   EntityExtractorApi:

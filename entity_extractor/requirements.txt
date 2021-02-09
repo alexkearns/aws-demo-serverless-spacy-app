@@ -1,1 +1,1 @@
-requests
+spacy==3.0.1

@@ -1,42 +1,25 @@
 import json
+import logging
+import spacy
 
-# import requests
-
+# Set up logger
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
 
 def lambda_handler(event, context):
-    """Sample pure Lambda function
+    body = json.loads(event['body'])
+    text_to_analyse = body['text']
+    logger.info("Analysing: {text}".format(text=text_to_analyse))
 
-    Parameters
-    ----------
-    event: dict, required
-        API Gateway Lambda Proxy Input Format
-
-        Event doc: https://docs.aws.amazon.com/apigateway/latest/developerguide/set-up-lambda-proxy-integrations.html#api-gateway-simple-proxy-for-lambda-input-format
-
-    context: object, required
-        Lambda Context runtime methods and attributes
-
-        Context doc: https://docs.aws.amazon.com/lambda/latest/dg/python-context-object.html
-
-    Returns
-    ------
-    API Gateway Lambda Proxy Output Format: dict
-
-        Return doc: https://docs.aws.amazon.com/apigateway/latest/developerguide/set-up-lambda-proxy-integrations.html
-    """
-
-    # try:
-    #     ip = requests.get("http://checkip.amazonaws.com/")
-    # except requests.RequestException as e:
-    #     # Send some context about this error to Lambda Logs
-    #     print(e)
-
-    #     raise e
+    # Use spaCy to extract entities from our text
+    nlp = spacy.load("en_core_web_sm")
+    doc = nlp(text_to_analyse)
+    entities = [[e.text, e.label_] for e in doc.ents]
 
     return {
         "statusCode": 200,
         "body": json.dumps({
-            "message": "hello world",
-            # "location": ip.text.replace("\n", "")
+            "text": text_to_analyse,
+            "entities": entities
         }),
     }
