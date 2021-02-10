@@ -79,6 +79,9 @@ Resources:
     Properties:
       PackageType: Image
       MemorySize: 512
+      Environment:
+        Variables:
+          REDIS_ENDPOINT: !GetAtt ElastiCacheCluster.PrimaryEndPoint.Address
       VpcConfig:
         SecurityGroupIds: [!Ref LambdaSecurityGroup]
         SubnetIds: [!Ref LambdaSubnetId]
