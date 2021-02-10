@@ -1,21 +1,73 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: >
-  entity-extractor-app
-
-  Sample SAM Template for entity-extractor-app
+Description: SAM Template for entity-extractor-app
 Parameters:
   ApiStage:
     Description: The name of the stage for the API (e.g. Dev/Prod/Test)
     Default: Prod
     Type: String
+  VpcId:
+    Description: The VPC to deploy into
+    Type: AWS::EC2::VPC::Id
+  LambdaSubnetId:
+    Description: The subnet for the Lambda to deploy into
+    Type: AWS::EC2::Subnet::Id
 
 # More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
 Globals:
   Function:
-    Timeout: 5
+    Timeout: 15
 
 Resources:
+  # ---- SECURITY GROUPS ---- #
+  LambdaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: A security group for the entity-extractor-app Lambda functions
+      GroupName: EntityExtractorLambdaSecurityGroup
+      VpcId: !Ref VpcId
+
+  ElastiCacheSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: A security group for entity-extractor-app ElastiCache
+      GroupName: EntityExtractorCacheSecurityGroup
+      VpcId: !Ref VpcId
+
+  LambdaSgEgressToCacheSg:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref LambdaSecurityGroup
+      Description: Grant egress access to ElastiCache security group
+      DestinationSecurityGroupId: !Ref ElastiCacheSecurityGroup
+      IpProtocol: tcp
+      FromPort: 6379
+      ToPort: 6379
+
+  CacheIngressFromLambdaSg:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref ElastiCacheSecurityGroup
+      Description: Grant ingress access from Lambda security group
+      SourceSecurityGroupId: !Ref LambdaSecurityGroup
+      IpProtocol: tcp
+      FromPort: 6379
+      ToPort: 6379
+  
+  # ---- ELASTICACHE ---- #
+  ElastiCacheCluster:
+    Type: AWS::ElastiCache::ReplicationGroup
+    Properties:
+      ReplicationGroupDescription: Replication group for entity-extractor-app cache
+      NumCacheClusters: 1
+      Engine: redis
+      CacheNodeType: cache.t3.micro
+      AutomaticFailoverEnabled: False
+      SecurityGroupIds:
+        - !Ref ElastiCacheSecurityGroup
+      TransitEncryptionEnabled: True
+
+  # ---- API GATEWAY AND LAMBDA ---- #
   ApiGatewayRestApi:
     Type: AWS::Serverless::Api
     Properties:
@@ -26,7 +78,10 @@ Resources:
     Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
     Properties:
       PackageType: Image
-      Handler: app.lambda_handler
+      MemorySize: 512
+      VpcConfig:
+        SecurityGroupIds: [!Ref LambdaSecurityGroup]
+        SubnetIds: [!Ref LambdaSubnetId]
       Events:
         EntityExtractor:
           Type: Api # More info about API Event Source: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#api
@@ -40,11 +95,11 @@ Resources:
 
 Outputs:
   EntityExtractorApi:
-    Description: "API Gateway endpoint URL for Prod stage for ExtractEntities function"
+    Description: "API Gateway endpoint URL for Prod stage for EntityExtractorFunction function"
     Value: !Sub "https://${ApiGatewayRestApi}.execute-api.${AWS::Region}.amazonaws.com/${ApiStage}/extract-entities"
   EntityExtractorFunction:
-    Description: "ExtractEntities Lambda Function ARN"
+    Description: "EntityExtractorFunction Lambda Function ARN"
     Value: !GetAtt EntityExtractorFunction.Arn
   EntityExtractorFunctionIamRole:
-    Description: "Implicit IAM Role created for ExtractEntities function"
+    Description: "Implicit IAM Role created for EntityExtractorFunction function"
     Value: !GetAtt EntityExtractorFunctionRole.Arn
