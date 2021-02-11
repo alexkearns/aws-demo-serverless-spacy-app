@@ -9,7 +9,7 @@ Parameters:
   VpcId:
     Description: The VPC to deploy into
     Type: AWS::EC2::VPC::Id
-  LambdaSubnetId:
+  SubnetId:
     Description: The subnet for the Lambda to deploy into
     Type: AWS::EC2::Subnet::Id
 
@@ -19,7 +19,34 @@ Globals:
     Timeout: 15
 
 Resources:
-  # ---- SECURITY GROUPS ---- #
+  # ---- DYNAMODB ABSTRACTION WITH SAM ---- #
+  ServerlessTable:
+    Type: AWS::Serverless::SimpleTable
+    Properties:
+      PrimaryKey:
+        Name: HashedText
+        Type: String
+        
+  # ---- SECURITY GROUPS AND NETWORKING---- #
+  SqsVpcEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      ServiceName: com.amazonaws.eu-west-2.sqs
+      PrivateDnsEnabled: True
+      SubnetIds:
+        - !Ref SubnetId
+      VpcEndpointType: Interface
+      VpcId: !Ref VpcId
+      SecurityGroupIds:
+        - !Ref SqsVpcEndpointSecurityGroup
+
+  SqsVpcEndpointSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: A security group for the entity-extractor-app SQS VPC endpoint
+      GroupName: EntityExtractorSQSVPCESecurityGroup
+      VpcId: !Ref VpcId
+
   LambdaSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -34,15 +61,25 @@ Resources:
       GroupName: EntityExtractorCacheSecurityGroup
       VpcId: !Ref VpcId
 
-  LambdaSgEgressToCacheSg:
+  LambdaSgEgressToSqsVpce:
     Type: AWS::EC2::SecurityGroupEgress
     Properties:
       GroupId: !Ref LambdaSecurityGroup
-      Description: Grant egress access to ElastiCache security group
-      DestinationSecurityGroupId: !Ref ElastiCacheSecurityGroup
+      Description: Allow egress from lambda to sqs vpce
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      DestinationSecurityGroupId: !Ref SqsVpcEndpointSecurityGroup
+
+  LambdaSgEgressToElasticache:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref LambdaSecurityGroup
+      Description: Allow egress from Lambda to elasticache
       IpProtocol: tcp
       FromPort: 6379
       ToPort: 6379
+      DestinationSecurityGroupId: !Ref ElastiCacheSecurityGroup
 
   CacheIngressFromLambdaSg:
     Type: AWS::EC2::SecurityGroupIngress
@@ -53,6 +90,16 @@ Resources:
       IpProtocol: tcp
       FromPort: 6379
       ToPort: 6379
+
+  SqsVpceIngressFromLambdaSg:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref SqsVpcEndpointSecurityGroup
+      Description: Grant ingress access from Lambda security group
+      SourceSecurityGroupId: !Ref LambdaSecurityGroup
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
   
   # ---- ELASTICACHE ---- #
   ElastiCacheCluster:
@@ -67,6 +114,12 @@ Resources:
         - !Ref ElastiCacheSecurityGroup
       TransitEncryptionEnabled: True
 
+  # ---- SQS QUEUE ---- #
+  PopulatorQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: entity-extractor-dynamodb-populator-queue
+
   # ---- API GATEWAY AND LAMBDA ---- #
   ApiGatewayRestApi:
     Type: AWS::Serverless::Api
@@ -74,17 +127,51 @@ Resources:
       Name: entity-extractor-app-api
       StageName: !Ref ApiStage
 
+  DynamoDbPopulator:
+    Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
+    Properties:
+      Runtime: python3.8
+      CodeUri: ./dynamodb_populator
+      Handler: app.lambda_handler
+      MemorySize: 256
+      Policies:
+        - Statement:
+            - Sid: AllowPutItemToDynamoDbTable
+              Effect: Allow
+              Action:
+                - dynamodb:PutItem
+              Resource: !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${ServerlessTable}
+      Environment:
+        Variables:
+          DYNAMODB_TABLE: !Ref ServerlessTable
+      Events:
+        Queue:
+          Type: SQS
+          Properties:
+            BatchSize: 10
+            Queue: !GetAtt PopulatorQueue.Arn
+
   EntityExtractorFunction:
     Type: AWS::Serverless::Function # More info about Function Resource: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#awsserverlessfunction
     Properties:
       PackageType: Image
       MemorySize: 512
+      Policies:
+        - Statement:
+            - Sid: AllowSendMessageToSqsQueue
+              Effect: Allow
+              Action:
+                - sqs:SendMessage
+              Resource: !GetAtt PopulatorQueue.Arn
       Environment:
         Variables:
           REDIS_ENDPOINT: !GetAtt ElastiCacheCluster.PrimaryEndPoint.Address
+          QUEUE_NAME: !GetAtt PopulatorQueue.QueueName
+          REGION: !Ref AWS::Region
+          ACCOUNT_ID: !Ref AWS::AccountId
       VpcConfig:
         SecurityGroupIds: [!Ref LambdaSecurityGroup]
-        SubnetIds: [!Ref LambdaSubnetId]
+        SubnetIds: [!Ref SubnetId]
       Events:
         EntityExtractor:
           Type: Api # More info about API Event Source: https://github.com/awslabs/serverless-application-model/blob/master/versions/2016-10-31.md#api

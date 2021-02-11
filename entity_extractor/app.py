@@ -1,6 +1,7 @@
 import json
 import hashlib
 import os
+import boto3
 import logging
 import spacy
 import redis
@@ -41,6 +42,20 @@ def lambda_handler(event, context):
     else:
         # Entities stored in JSON in cache
         entities = json.loads(entities)
+
+    # Put message on queue to be handled by another function
+    queue_msg_body = json.dumps({
+        "hashed_key": hash_text,
+        "entities": entities
+    })
+    sqs = boto3.client('sqs', endpoint_url='https://sqs.{}.amazonaws.com/'.format(os.environ['REGION']))
+    sqs.send_message(
+        QueueUrl="https://sqs.{}.amazonaws.com/{}/{}".format(
+            os.environ['REGION'],
+            os.environ['ACCOUNT_ID'],
+            os.environ['QUEUE_NAME']
+        ),
+        MessageBody=queue_msg_body)
 
     return {
         "statusCode": 200,
